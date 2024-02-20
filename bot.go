@@ -1,8 +1,7 @@
-package bot
+package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -10,16 +9,9 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-var BotToken string
+func runBot(config Config) {
 
-func checkNilErr(e error) {
-	if e != nil {
-		log.Fatal("Error message is: ", e)
-	}
-}
-
-func Run() {
-
+	BotToken := config.DiscordToken
 	// create a session
 	discord, err := discordgo.New("Bot " + BotToken)
 	checkNilErr(err)

@@ -1,12 +1,14 @@
 package main
 
-import (
-	"os"
-
-	bot "github.com/bezerker/sndbot/bot"
-)
+import "log"
 
 func main() {
-	bot.BotToken = os.Getenv("SNDBOT_DISCORD_TOKEN") // set the bot token from the environment variable
-	bot.Run()                                        // call the run function of bot/bot.go
+	config := readConfig("config.yaml") // call the readConfig function of config.go
+	runBot(config)                      // Run the bot passing in required arguments
+}
+
+func checkNilErr(e error) {
+	if e != nil {
+		log.Fatal("Error message is: ", e)
+	}
 }
