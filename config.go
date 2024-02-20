@@ -12,8 +12,7 @@ func readConfig(configfile string) Config {
 	viper.SetConfigType("yaml")
 
 	err := viper.ReadInConfig()
-	bot.checkNilErr(err)
-
+	checkNilErr(err)
 	return Config{
 		DiscordToken: viper.GetString("discord.token"),
 	}
