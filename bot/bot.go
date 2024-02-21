@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"strings"
 
+	blizzard "github.com/bezerker/sndbot/blizzard"
 	config "github.com/bezerker/sndbot/config"
 	util "github.com/bezerker/sndbot/util"
 	"github.com/bwmarrin/discordgo"
@@ -20,6 +21,9 @@ func RunBot(config config.Config) {
 
 	// add a event handler
 	discord.AddHandler(newMessage)
+
+	// Login to Blizzard API
+	blizzard.Login(config)
 
 	// open session
 	discord.Open()

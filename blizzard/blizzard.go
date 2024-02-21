@@ -2,6 +2,10 @@
 
 package blizzard
 
-func login() {
-	return
+import (
+	config "github.com/bezerker/sndbot/config"
+)
+
+func Login(config config.Config) {
+
 }

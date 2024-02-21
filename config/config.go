@@ -6,7 +6,9 @@ import (
 )
 
 type Config struct {
-	DiscordToken string
+	DiscordToken         string
+	BlizzardClientID     string
+	BlizzardClientSecret string
 }
 
 func ReadConfig(configfile string) Config {
@@ -17,6 +19,8 @@ func ReadConfig(configfile string) Config {
 	err := viper.ReadInConfig()
 	util.CheckNilErr(err)
 	return Config{
-		DiscordToken: viper.GetString("discord.token"),
+		DiscordToken:         viper.GetString("discord.token"),
+		BlizzardClientID:     viper.GetString("blizzard.clientid"),
+		BlizzardClientSecret: viper.GetString("blizzard.clientsecret"),
 	}
 }
