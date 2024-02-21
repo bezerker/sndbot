@@ -14,7 +14,7 @@ func runBot(config Config) {
 	BotToken := config.DiscordToken
 	// create a session
 	discord, err := discordgo.New("Bot " + BotToken)
-	checkNilErr(err)
+	util.checkNilErr(err)
 
 	// add a event handler
 	discord.AddHandler(newMessage)
