@@ -48,6 +48,7 @@ func newMessage(discord *discordgo.Session, message *discordgo.MessageCreate) {
 	case strings.Contains(message.Content, "!bye"):
 		discord.ChannelMessageSend(message.ChannelID, "Good Bye👋")
 		// add more cases if required
+	case strings.Contains(message.Content, "!ping"):
+		discord.ChannelMessageSend(message.ChannelID, "Pong🏓")
 	}
-
 }
