@@ -5,19 +5,19 @@ package blizzard
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/FuzzyStatic/blizzard/v3"
 	"github.com/FuzzyStatic/blizzard/v3/wowsearch"
 
 	config "github.com/bezerker/sndbot/config"
+	util "github.com/bezerker/sndbot/util"
 )
 
 var clientID string
 var clientSecret string
 
-func TestRealmSearch() {
+func RealmSearch() string {
 	usBlizzClient, err := blizzard.NewClient(blizzard.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -50,7 +50,26 @@ func TestRealmSearch() {
 		panic(err)
 	}
 
-	fmt.Println(string(out[:]))
+	return string(out[:])
+}
+
+func RealmList() string {
+	usBlizzClient, err := blizzard.NewClient(blizzard.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		HTTPClient:   http.DefaultClient,
+		Region:       blizzard.US,
+		Locale:       blizzard.EnUS,
+	})
+	util.CheckNilErr(err)
+
+	realmList, _, err := usBlizzClient.ClassicWoWRealmIndex(context.TODO())
+	util.CheckNilErr(err)
+	out, err := json.MarshalIndent(realmList, "", "  ")
+	util.CheckNilErr(err)
+
+	return string(out[:])
+
 }
 
 func init() {

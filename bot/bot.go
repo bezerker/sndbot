@@ -55,6 +55,9 @@ func newMessage(discord *discordgo.Session, message *discordgo.MessageCreate) {
 		discord.ChannelMessageSend(message.ChannelID, "Pong🏓")
 	case strings.Contains(message.Content, "!realmsearch"):
 		discord.ChannelMessageSend(message.ChannelID, "Searching for realms...")
-		discord.ChannelMessageSend(message.ChannelID, blizzard.TestRealmSearch())
+		discord.ChannelMessageSend(message.ChannelID, blizzard.RealmSearch())
+	case strings.Contains(message.Content, "!realmlist"):
+		discord.ChannelMessageSend(message.ChannelID, "Fetching realm list...")
+		discord.ChannelMessageSend(message.ChannelID, blizzard.RealmList())
 	}
 }
