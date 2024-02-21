@@ -1,4 +1,4 @@
-package main
+package bot
 
 import (
 	"fmt"
@@ -6,15 +6,17 @@ import (
 	"os/signal"
 	"strings"
 
+	config "github.com/bezerker/sndbot/config"
+	util "github.com/bezerker/sndbot/util"
 	"github.com/bwmarrin/discordgo"
 )
 
-func runBot(config Config) {
+func RunBot(config config.Config) {
 
 	BotToken := config.DiscordToken
 	// create a session
 	discord, err := discordgo.New("Bot " + BotToken)
-	util.checkNilErr(err)
+	util.CheckNilErr(err)
 
 	// add a event handler
 	discord.AddHandler(newMessage)
