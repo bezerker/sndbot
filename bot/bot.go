@@ -57,7 +57,11 @@ func newMessage(discord *discordgo.Session, message *discordgo.MessageCreate) {
 		discord.ChannelMessageSend(message.ChannelID, "Searching for realms...")
 		discord.ChannelMessageSend(message.ChannelID, blizzard.RealmSearch())
 	case strings.Contains(message.Content, "!realmlist"):
-		discord.ChannelMessageSend(message.ChannelID, "Fetching realm list...")
-		discord.ChannelMessageSend(message.ChannelID, blizzard.RealmList())
+		_, errRL1 := discord.ChannelMessageSend(message.ChannelID, "Fetching realm list...")
+		util.CheckNilErr(errRL1)
+		_, errRL2 := discord.ChannelMessageSend(message.ChannelID, blizzard.RealmList())
+		if errRL2 != nil {
+			discord.ChannelMessageSend(message.ChannelID, "Error fetching realm list with error: "+errRL2.Error())
+		}
 	}
 }

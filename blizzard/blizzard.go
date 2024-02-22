@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/FuzzyStatic/blizzard/v3"
 	"github.com/FuzzyStatic/blizzard/v3/wowsearch"
@@ -68,8 +69,23 @@ func RealmList() string {
 	out, err := json.MarshalIndent(realmList, "", "  ")
 	util.CheckNilErr(err)
 
-	return string(out[:])
+	return GetRealmNames(string(out))
 
+}
+
+func GetRealmNames(realmList string) string {
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(realmList), &data); err != nil {
+		panic(err)
+	}
+
+	realms := data["realms"].([]interface{})
+	names := make([]string, len(realms))
+	for i, realm := range realms {
+		names[i] = realm.(map[string]interface{})["name"].(string)
+	}
+
+	return strings.Join(names, "\n")
 }
 
 func init() {
