@@ -3,3 +3,4 @@ sndbot
 characters.db
 config.env
 logs
+*.bak
