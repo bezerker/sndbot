@@ -1,22 +1,27 @@
 package config
 
 import (
-	util "github.com/bezerker/sndbot/util"
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	DiscordToken string
+	DiscordToken     string `mapstructure:"DISCORD_TOKEN"`
+	BlizzardClientID string `mapstructure:"BLIZZARD_CLIENT_ID"`
+	BlizzardSecret   string `mapstructure:"BLIZZARD_SECRET"`
 }
 
-func ReadConfig(configfile string) Config {
-	viper.SetConfigName(configfile)
+func LoadConfig() (config Config, err error) {
 	viper.AddConfigPath(".")
-	viper.SetConfigType("yaml")
+	viper.SetConfigName("config")
+	viper.SetConfigType("env")
 
-	err := viper.ReadInConfig()
-	util.CheckNilErr(err)
-	return Config{
-		DiscordToken: viper.GetString("discord.token"),
+	viper.AutomaticEnv()
+
+	err = viper.ReadInConfig()
+	if err != nil {
+		return
 	}
+
+	err = viper.Unmarshal(&config)
+	return
 }
