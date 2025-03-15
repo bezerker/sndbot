@@ -54,6 +54,12 @@ type Realm struct {
 	Slug string `json:"slug"`
 }
 
+// GuildInfo represents simplified guild information
+type GuildInfo struct {
+	Name string
+	Rank string
+}
+
 func NewBlizzardClient(clientID, clientSecret string) *BlizzardClient {
 	util.Logger.Printf("Initializing Blizzard API client with client ID: %s", clientID)
 	return &BlizzardClient{
@@ -183,6 +189,22 @@ func (c *BlizzardClient) GetCharacterGuild(characterName, realm string) (*Guild,
 
 	util.Logger.Printf("Successfully found guild information: %+v", character.Guild)
 	return &character.Guild, nil
+}
+
+// GetGuildInfo returns simplified guild information for a character
+func (c *BlizzardClient) GetGuildInfo(characterName, realm string) (*GuildInfo, error) {
+	guild, err := c.GetCharacterGuild(characterName, realm)
+	if err != nil {
+		return nil, err
+	}
+	if guild == nil {
+		return nil, nil
+	}
+
+	return &GuildInfo{
+		Name: guild.Name,
+		Rank: guild.Faction.Name, // Using faction name as rank since that's what we have available
+	}, nil
 }
 
 func login() {

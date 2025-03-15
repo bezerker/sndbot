@@ -14,6 +14,22 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// DiscordSession is an interface that defines the methods we need from discordgo.Session
+type DiscordSession interface {
+	ChannelMessageSend(channelID string, content string, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	Channel(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+	GetState() *discordgo.State
+}
+
+// DiscordWrapper wraps a discordgo.Session to implement our interface
+type DiscordWrapper struct {
+	*discordgo.Session
+}
+
+func (w *DiscordWrapper) GetState() *discordgo.State {
+	return w.State
+}
+
 var (
 	db          *sql.DB
 	blizzardAPI *blizzard.BlizzardClient
@@ -46,21 +62,28 @@ func RunBot(config config.Config) {
 	discord, err := discordgo.New("Bot " + BotToken)
 	util.CheckNilErr(err)
 
+	wrapper := &DiscordWrapper{Session: discord}
+
 	// add a event handler
-	discord.AddHandler(newMessage)
+	discord.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+		newMessage(wrapper, m)
+	})
 
-	// open session
-	discord.Open()
-	defer discord.Close() // close session, after function termination
+	// open the connection
+	err = discord.Open()
+	util.CheckNilErr(err)
+	defer discord.Close()
 
-	// keep bot running until there is NO os interruption (ctrl + C)
-	util.Logger.Print("Bot is now running. Press Ctrl+C to exit.")
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	<-c
+	fmt.Println("Bot is running!")
+
+	// Wait for a signal to quit
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	<-stop
+	fmt.Println("Graceful shutdown")
 }
 
-func handleAdminCommands(discord *discordgo.Session, message *discordgo.MessageCreate, args []string) {
+func handleAdminCommands(discord DiscordSession, message *discordgo.MessageCreate, args []string) {
 	// Only process admin commands in DMs
 	channel, err := discord.Channel(message.ChannelID)
 	if err != nil {
@@ -169,111 +192,99 @@ func handleAdminCommands(discord *discordgo.Session, message *discordgo.MessageC
 	}
 }
 
-func newMessage(discord *discordgo.Session, message *discordgo.MessageCreate) {
-	if message.Author.ID == discord.State.User.ID {
+func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
+	if m.Author.ID == s.GetState().User.ID {
 		return
 	}
 
 	// Split the message content into words
-	args := strings.Fields(message.Content)
+	args := strings.Fields(m.Content)
 	if len(args) == 0 {
 		return
 	}
 
 	// Check for admin commands first
-	if strings.HasPrefix(args[0], "!admin-help") ||
-		strings.HasPrefix(args[0], "!addadmin") ||
-		strings.HasPrefix(args[0], "!removeadmin") ||
-		strings.HasPrefix(args[0], "!register-user") ||
-		strings.HasPrefix(args[0], "!remove-user") ||
-		strings.HasPrefix(args[0], "!list-users") {
-		handleAdminCommands(discord, message, args)
+	if strings.HasPrefix(args[0], "!admin-") || args[0] == "!addadmin" || args[0] == "!removeadmin" || args[0] == "!register-user" || args[0] == "!remove-user" || args[0] == "!list-users" {
+		handleAdminCommands(s, m, args)
 		return
 	}
 
-	// respond to user message if it contains commands
-	switch {
-	case strings.HasPrefix(message.Content, "!register"):
+	// Handle regular commands
+	switch args[0] {
+	case "!register":
 		if len(args) != 3 {
-			discord.ChannelMessageSend(message.ChannelID, "Usage: !register <character_name> <server>")
+			s.ChannelMessageSend(m.ChannelID, "Usage: !register <character_name> <server>")
 			return
 		}
+		characterName := args[1]
+		server := args[2]
 
-		registration := database.CharacterRegistration{
-			DiscordUsername: message.Author.Username,
-			CharacterName:   args[1],
-			Server:          args[2],
+		// Create registration
+		reg := database.CharacterRegistration{
+			DiscordUsername: m.Author.Username,
+			CharacterName:   characterName,
+			Server:          server,
 		}
 
-		err := database.RegisterCharacter(db, registration)
+		// Register character
+		err := database.RegisterCharacter(db, reg)
 		if err != nil {
-			discord.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Failed to register character: %v", err))
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to register character: %v", err))
 			return
 		}
 
-		discord.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Successfully registered character %s on server %s for %s", args[1], args[2], message.Author.Username))
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Successfully registered character %s on server %s for %s", characterName, server, m.Author.Username))
 
-	case strings.HasPrefix(message.Content, "!guild"):
-		util.Logger.Printf("Guild lookup requested by user %s", message.Author.Username)
-
-		registration, err := database.GetCharacter(db, message.Author.Username)
+	case "!whoami":
+		reg, err := database.GetCharacter(db, m.Author.Username)
 		if err != nil {
-			util.Logger.Printf("Error looking up registration for %s: %v", message.Author.Username, err)
-			discord.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Error looking up registration: %v", err))
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error: %v", err))
 			return
 		}
-		if registration == nil {
-			util.Logger.Printf("No character registration found for user %s", message.Author.Username)
-			discord.ChannelMessageSend(message.ChannelID, "You haven't registered a character yet. Use !register <character_name> <server> to register.")
+		if reg == nil {
+			s.ChannelMessageSend(m.ChannelID, "You haven't registered a character yet. Use !register <character_name> <server> to register.")
 			return
 		}
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Your registered character is %s on server %s", reg.CharacterName, reg.Server))
 
-		util.Logger.Printf("Looking up guild for character %s on server %s", registration.CharacterName, registration.Server)
-		guild, err := blizzardAPI.GetCharacterGuild(registration.CharacterName, registration.Server)
+	case "!guild":
+		reg, err := database.GetCharacter(db, m.Author.Username)
 		if err != nil {
-			util.Logger.Printf("Error looking up guild information: %v", err)
-			discord.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Error looking up guild information: %v", err))
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error: %v", err))
 			return
 		}
-		if guild == nil {
-			util.Logger.Printf("Character %s on %s is not in a guild", registration.CharacterName, registration.Server)
-			discord.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Character %s on %s is not in a guild", registration.CharacterName, registration.Server))
+		if reg == nil {
+			s.ChannelMessageSend(m.ChannelID, "You haven't registered a character yet. Use !register <character_name> <server> to register.")
 			return
 		}
 
-		response := fmt.Sprintf("%s is in the guild <%s> on %s (%s)",
-			registration.CharacterName, guild.Name, guild.Realm.Name, guild.Faction.Name)
-		util.Logger.Printf("Guild lookup successful: %s", response)
-		discord.ChannelMessageSend(message.ChannelID, response)
-
-	case strings.HasPrefix(message.Content, "!whoami"):
-		registration, err := database.GetCharacter(db, message.Author.Username)
+		guildInfo, err := blizzardAPI.GetGuildInfo(reg.CharacterName, reg.Server)
 		if err != nil {
-			discord.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Error looking up registration: %v", err))
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to get guild info: %v", err))
 			return
 		}
-		if registration == nil {
-			discord.ChannelMessageSend(message.ChannelID, "You haven't registered a character yet. Use !register <character_name> <server> to register.")
-			return
-		}
-		discord.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Your registered character is %s on server %s", registration.CharacterName, registration.Server))
 
-	case strings.Contains(message.Content, "!help"):
+		if guildInfo == nil {
+			s.ChannelMessageSend(m.ChannelID, "Character is not in a guild")
+			return
+		}
+
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Guild: %s\nRank: %s", guildInfo.Name, guildInfo.Rank))
+
+	case "!help":
 		helpMessage := `Available commands:
 !help - Show this help message
-!register <character_name> <server> - Register your character (or update existing registration)
-!whoami - Show your current character registration
-!guild - Show your character's guild information
-!bye - Say goodbye
-!ping - Ping the bot
+!register <character_name> <server> - Register your character
+!whoami - Show your registered character
+!guild - Show your guild information
+!ping - Pong
+!bye - Say goodbye`
+		s.ChannelMessageSend(m.ChannelID, helpMessage)
 
-For admin commands, DM the bot with !admin-help`
-		discord.ChannelMessageSend(message.ChannelID, helpMessage)
+	case "!ping":
+		s.ChannelMessageSend(m.ChannelID, "Pong🏓")
 
-	case strings.Contains(message.Content, "!bye"):
-		discord.ChannelMessageSend(message.ChannelID, "Good Bye👋")
-
-	case strings.Contains(message.Content, "!ping"):
-		discord.ChannelMessageSend(message.ChannelID, "Pong🏓")
+	case "!bye":
+		s.ChannelMessageSend(m.ChannelID, "Good Bye👋")
 	}
 }
