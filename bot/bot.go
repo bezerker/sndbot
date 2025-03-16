@@ -287,7 +287,8 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 !whoami - Show your registered character
 !guild - Show your guild information
 !ping - Pong
-!bye - Say goodbye`
+!bye - Say goodbye
+!checkguild <character> <realm> - Check if a character is in Stand and Deliver`
 		s.ChannelMessageSend(m.ChannelID, helpMessage)
 
 	case "!ping":
@@ -295,5 +296,28 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 
 	case "!bye":
 		s.ChannelMessageSend(m.ChannelID, "Good Bye👋")
+
+	case "!checkguild":
+		if len(args) < 3 {
+			s.ChannelMessageSend(m.ChannelID, "Usage: !checkguild <character> <realm>")
+			return
+		}
+		character := args[1]
+		realm := args[2]
+
+		// Stand and Deliver guild ID on Cenarius
+		guildID := 70395110
+
+		isInGuild, err := blizzardAPI.IsCharacterInGuild(character, realm, guildID)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error checking guild membership: %v", err))
+			return
+		}
+
+		if isInGuild {
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s-%s is in Stand and Deliver", character, realm))
+		} else {
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s-%s is not in Stand and Deliver", character, realm))
+		}
 	}
 }

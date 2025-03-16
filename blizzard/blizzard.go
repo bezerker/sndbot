@@ -361,6 +361,35 @@ func (c *BlizzardClient) GetGuildInfo(characterName, realm string) (*GuildInfo, 
 	}, nil
 }
 
+// IsCharacterInGuild checks if a character is in a specific guild by ID
+func (c *BlizzardClient) IsCharacterInGuild(characterName, realm string, guildID int) (bool, error) {
+	// First get the character's guild info
+	guild, err := c.GetCharacterGuild(characterName, realm)
+	if err != nil {
+		return false, fmt.Errorf("failed to get character guild info: %v", err)
+	}
+
+	if guild == nil {
+		if util.IsDebugEnabled() {
+			util.Logger.Printf("Character %s on %s is not in any guild", characterName, realm)
+		}
+		return false, nil
+	}
+
+	// Check if the guild ID matches
+	if guild.ID == guildID {
+		if util.IsDebugEnabled() {
+			util.Logger.Printf("Character %s on %s is in guild %s (ID: %d)", characterName, realm, guild.Name, guild.ID)
+		}
+		return true, nil
+	}
+
+	if util.IsDebugEnabled() {
+		util.Logger.Printf("Character %s on %s is in a different guild: %s (ID: %d)", characterName, realm, guild.Name, guild.ID)
+	}
+	return false, nil
+}
+
 func login() {
 	return
 }
