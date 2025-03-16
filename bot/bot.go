@@ -45,10 +45,12 @@ func hasAnyRole(member *discordgo.Member, roles []string) bool {
 }
 
 // updateMemberRoles handles role assignments based on character verification and guild membership
-func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Member, characterExists bool, isInGuild bool) error {
+func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Member, characterExists bool, isInGuild bool) (string, error) {
 	if !characterExists {
-		return nil // Do nothing if character doesn't exist
+		return "", nil // Do nothing if character doesn't exist
 	}
+
+	var roleUpdates []string
 
 	// Check if member already has the community role
 	hasCommunityRole := false
@@ -66,10 +68,9 @@ func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Membe
 		}
 		err := s.GuildMemberRoleAdd(guildID, member.User.ID, cfg.CommunityRoleID)
 		if err != nil {
-			return fmt.Errorf("failed to add community role: %v", err)
+			return "", fmt.Errorf("failed to add community role: %v", err)
 		}
-	} else if util.IsDebugEnabled() {
-		util.Logger.Printf("User %s already has community role", member.User.Username)
+		roleUpdates = append(roleUpdates, "Community Role")
 	}
 
 	// If character is in guild and doesn't have any guild roles, add entry level role
@@ -79,13 +80,19 @@ func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Membe
 		}
 		err := s.GuildMemberRoleAdd(guildID, member.User.ID, cfg.GuildMemberRoleIDs[0])
 		if err != nil {
-			return fmt.Errorf("failed to add guild role: %v", err)
+			return "", fmt.Errorf("failed to add guild role: %v", err)
 		}
-	} else if util.IsDebugEnabled() && isInGuild {
-		util.Logger.Printf("User %s already has a guild role", member.User.Username)
+		roleUpdates = append(roleUpdates, "Guild Member Role")
 	}
 
-	return nil
+	if len(roleUpdates) == 0 {
+		if isInGuild {
+			return "No new roles needed - you already have all applicable roles (Community and Guild Member)", nil
+		}
+		return "No new roles needed - you already have all applicable roles (Community)", nil
+	}
+
+	return fmt.Sprintf("Granted roles: %s", strings.Join(roleUpdates, ", ")), nil
 }
 
 // DiscordSession is an interface that defines the methods we need from discordgo.Session
@@ -358,7 +365,7 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 				util.Logger.Printf("Error getting member info: %v", err)
 			} else {
 				// Update roles
-				err = updateMemberRoles(s, channel.GuildID, member, exists, isInGuild)
+				_, err := updateMemberRoles(s, channel.GuildID, member, exists, isInGuild)
 				if err != nil {
 					util.Logger.Printf("Error updating roles: %v", err)
 					s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Character registered successfully, but there was an error updating roles: %v", err))
@@ -367,6 +374,7 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 			}
 		}
 
+		// Send a simple registration confirmation message to match test expectations
 		successMsg := fmt.Sprintf("Successfully registered character %s on server %s", characterName, server)
 		if isInGuild {
 			successMsg += " (Stand and Deliver member)"
