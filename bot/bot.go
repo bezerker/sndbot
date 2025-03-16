@@ -14,11 +14,91 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+const (
+	// Role IDs - Replace these with your Discord server's actual role IDs
+	// To get role IDs:
+	// 1. Enable Developer Mode in Discord (User Settings -> App Settings -> Advanced)
+	// 2. Right-click the role and select "Copy ID"
+	RoleCommunity = "1350701541597646930" // Replace with your community role ID
+)
+
+// GuildMembershipRoles is an ordered list of role IDs for guild members, starting with entry level
+var GuildMembershipRoles = []string{
+	"1350701600087212032", // Entry level guild role ID
+	"1350701689312641076", // Raider role ID
+	"1350701679246446673", // Officer role ID
+}
+
+// hasAnyRole checks if a member has any of the specified roles
+func hasAnyRole(member *discordgo.Member, roles []string) bool {
+	if member == nil {
+		return false
+	}
+
+	memberRoleMap := make(map[string]bool)
+	for _, role := range member.Roles {
+		memberRoleMap[role] = true
+	}
+
+	for _, role := range roles {
+		if memberRoleMap[role] {
+			return true
+		}
+	}
+	return false
+}
+
+// updateMemberRoles handles role assignments based on character verification and guild membership
+func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Member, characterExists bool, isInGuild bool) error {
+	if !characterExists {
+		return nil // Do nothing if character doesn't exist
+	}
+
+	// Check if member already has the community role
+	hasCommunityRole := false
+	for _, role := range member.Roles {
+		if role == RoleCommunity {
+			hasCommunityRole = true
+			break
+		}
+	}
+
+	// Add community role if character exists and user doesn't have it yet
+	if !hasCommunityRole {
+		if util.IsDebugEnabled() {
+			util.Logger.Printf("Adding community role to user %s", member.User.Username)
+		}
+		err := s.GuildMemberRoleAdd(guildID, member.User.ID, RoleCommunity)
+		if err != nil {
+			return fmt.Errorf("failed to add community role: %v", err)
+		}
+	} else if util.IsDebugEnabled() {
+		util.Logger.Printf("User %s already has community role", member.User.Username)
+	}
+
+	// If character is in guild and doesn't have any guild roles, add entry level role
+	if isInGuild && !hasAnyRole(member, GuildMembershipRoles) {
+		if util.IsDebugEnabled() {
+			util.Logger.Printf("Adding guild member role to user %s", member.User.Username)
+		}
+		err := s.GuildMemberRoleAdd(guildID, member.User.ID, GuildMembershipRoles[0])
+		if err != nil {
+			return fmt.Errorf("failed to add guild role: %v", err)
+		}
+	} else if util.IsDebugEnabled() && isInGuild {
+		util.Logger.Printf("User %s already has a guild role", member.User.Username)
+	}
+
+	return nil
+}
+
 // DiscordSession is an interface that defines the methods we need from discordgo.Session
 type DiscordSession interface {
 	ChannelMessageSend(channelID string, content string, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	Channel(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	GetState() *discordgo.State
+	GuildMember(guildID, userID string) (*discordgo.Member, error)
+	GuildMemberRoleAdd(guildID, userID, roleID string) error
 }
 
 // DiscordWrapper wraps a discordgo.Session to implement our interface
@@ -28,6 +108,14 @@ type DiscordWrapper struct {
 
 func (w *DiscordWrapper) GetState() *discordgo.State {
 	return w.State
+}
+
+func (w *DiscordWrapper) GuildMember(guildID, userID string) (*discordgo.Member, error) {
+	return w.Session.GuildMember(guildID, userID)
+}
+
+func (w *DiscordWrapper) GuildMemberRoleAdd(guildID, userID, roleID string) error {
+	return w.Session.GuildMemberRoleAdd(guildID, userID, roleID)
 }
 
 var (
@@ -219,6 +307,25 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 		characterName := args[1]
 		server := args[2]
 
+		// First, check if the character exists
+		exists, err := blizzardAPI.CharacterExists(characterName, server)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error verifying character: %v", err))
+			return
+		}
+
+		if !exists {
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Character %s was not found on realm %s. Please check the spelling and try again.", characterName, server))
+			return
+		}
+
+		// Check if character is in Stand and Deliver
+		isInGuild, err := blizzardAPI.IsCharacterInGuild(characterName, server, 70395110) // Stand and Deliver guild ID
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error checking guild membership: %v", err))
+			return
+		}
+
 		// Create registration
 		reg := database.CharacterRegistration{
 			DiscordUsername: m.Author.Username,
@@ -227,13 +334,41 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 		}
 
 		// Register character
-		err := database.RegisterCharacter(db, reg)
+		err = database.RegisterCharacter(db, reg)
 		if err != nil {
 			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to register character: %v", err))
 			return
 		}
 
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Successfully registered character %s on server %s for %s", characterName, server, m.Author.Username))
+		// Get the Discord guild (server) ID from the message
+		channel, err := s.Channel(m.ChannelID)
+		if err != nil {
+			util.Logger.Printf("Error getting channel info: %v", err)
+			return
+		}
+
+		// Only process role updates if this is in a guild channel
+		if channel.GuildID != "" {
+			// Get member information
+			member, err := s.GuildMember(channel.GuildID, m.Author.ID)
+			if err != nil {
+				util.Logger.Printf("Error getting member info: %v", err)
+			} else {
+				// Update roles
+				err = updateMemberRoles(s, channel.GuildID, member, exists, isInGuild)
+				if err != nil {
+					util.Logger.Printf("Error updating roles: %v", err)
+					s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Character registered successfully, but there was an error updating roles: %v", err))
+					return
+				}
+			}
+		}
+
+		successMsg := fmt.Sprintf("Successfully registered character %s on server %s", characterName, server)
+		if isInGuild {
+			successMsg += " (Stand and Deliver member)"
+		}
+		s.ChannelMessageSend(m.ChannelID, successMsg)
 
 	case "!whoami":
 		reg, err := database.GetCharacter(db, m.Author.Username)

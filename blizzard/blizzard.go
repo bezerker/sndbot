@@ -390,6 +390,58 @@ func (c *BlizzardClient) IsCharacterInGuild(characterName, realm string, guildID
 	return false, nil
 }
 
+// CharacterExists checks if a character exists on the specified realm
+func (c *BlizzardClient) CharacterExists(characterName, realm string) (bool, error) {
+	if err := c.getAccessToken(); err != nil {
+		return false, fmt.Errorf("failed to get access token: %v", err)
+	}
+
+	// Convert realm name to slug format
+	realmSlug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(realm), " ", "-"))
+	characterNameLower := strings.ToLower(strings.TrimSpace(characterName))
+
+	// Build URL for character profile
+	baseURL := "https://us.api.blizzard.com"
+	path := fmt.Sprintf("/profile/wow/character/%s/%s", url.PathEscape(realmSlug), url.PathEscape(characterNameLower))
+	params := url.Values{}
+	params.Add("namespace", "profile-us")
+	params.Add("locale", "en_US")
+
+	fullURL := fmt.Sprintf("%s%s?%s", baseURL, path, params.Encode())
+
+	if util.IsDebugEnabled() {
+		util.Logger.Printf("Checking character existence: %s", fullURL)
+	}
+
+	req, err := http.NewRequest("GET", fullURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create character request: %v", err)
+	}
+
+	req.Header.Add("Authorization", "Bearer "+c.accessToken)
+	req.Header.Add("Accept", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("failed to check character: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		if util.IsDebugEnabled() {
+			util.Logger.Printf("Character %s on realm %s not found", characterName, realm)
+		}
+		return false, nil
+	}
+
+	if resp.StatusCode != 200 {
+		return false, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+	}
+
+	return true, nil
+}
+
 func login() {
 	return
 }
