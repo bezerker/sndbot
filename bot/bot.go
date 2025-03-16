@@ -260,7 +260,11 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 
 		guildInfo, err := blizzardAPI.GetGuildInfo(reg.CharacterName, reg.Server)
 		if err != nil {
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to get guild info: %v", err))
+			if strings.Contains(err.Error(), "guild not found") {
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Could not find guild information. Please verify:\n1. The character %s exists on realm %s\n2. The character is in a guild\n3. The realm name is spelled correctly", reg.CharacterName, reg.Server))
+			} else {
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to get guild info: %v", err))
+			}
 			return
 		}
 
@@ -269,7 +273,12 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 			return
 		}
 
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Guild: %s\nRank: %s", guildInfo.Name, guildInfo.Rank))
+		rankStr := "Unknown"
+		if guildInfo.Rank >= 0 {
+			rankStr = fmt.Sprintf("%d", guildInfo.Rank)
+		}
+
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Guild: %s\nFaction: %s\nRank: %s", guildInfo.Name, guildInfo.Faction, rankStr))
 
 	case "!help":
 		helpMessage := `Available commands:
