@@ -14,19 +14,15 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const (
-	// Role IDs - Replace these with your Discord server's actual role IDs
-	// To get role IDs:
-	// 1. Enable Developer Mode in Discord (User Settings -> App Settings -> Advanced)
-	// 2. Right-click the role and select "Copy ID"
-	RoleCommunity = "1350701541597646930" // Replace with your community role ID
+var (
+	db          *sql.DB
+	blizzardAPI BlizzardAPI
+	cfg         config.Config
 )
 
-// GuildMembershipRoles is an ordered list of role IDs for guild members, starting with entry level
-var GuildMembershipRoles = []string{
-	"1350701600087212032", // Entry level guild role ID
-	"1350701689312641076", // Raider role ID
-	"1350701679246446673", // Officer role ID
+// Initialize the bot with the given configuration
+func Initialize(config config.Config) {
+	cfg = config
 }
 
 // hasAnyRole checks if a member has any of the specified roles
@@ -57,7 +53,7 @@ func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Membe
 	// Check if member already has the community role
 	hasCommunityRole := false
 	for _, role := range member.Roles {
-		if role == RoleCommunity {
+		if role == cfg.CommunityRoleID {
 			hasCommunityRole = true
 			break
 		}
@@ -68,7 +64,7 @@ func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Membe
 		if util.IsDebugEnabled() {
 			util.Logger.Printf("Adding community role to user %s", member.User.Username)
 		}
-		err := s.GuildMemberRoleAdd(guildID, member.User.ID, RoleCommunity)
+		err := s.GuildMemberRoleAdd(guildID, member.User.ID, cfg.CommunityRoleID)
 		if err != nil {
 			return fmt.Errorf("failed to add community role: %v", err)
 		}
@@ -77,11 +73,11 @@ func updateMemberRoles(s DiscordSession, guildID string, member *discordgo.Membe
 	}
 
 	// If character is in guild and doesn't have any guild roles, add entry level role
-	if isInGuild && !hasAnyRole(member, GuildMembershipRoles) {
+	if isInGuild && !hasAnyRole(member, cfg.GuildMemberRoleIDs) {
 		if util.IsDebugEnabled() {
 			util.Logger.Printf("Adding guild member role to user %s", member.User.Username)
 		}
-		err := s.GuildMemberRoleAdd(guildID, member.User.ID, GuildMembershipRoles[0])
+		err := s.GuildMemberRoleAdd(guildID, member.User.ID, cfg.GuildMemberRoleIDs[0])
 		if err != nil {
 			return fmt.Errorf("failed to add guild role: %v", err)
 		}
@@ -127,11 +123,6 @@ type BlizzardAPI interface {
 	GetGuildMemberInfo(characterName, realmSlug, guildName string) (*blizzard.GuildMember, error)
 }
 
-var (
-	db          *sql.DB
-	blizzardAPI BlizzardAPI
-)
-
 func RunBot(config config.Config) {
 	// Initialize logger
 	if err := util.InitLogger(); err != nil {
@@ -142,8 +133,11 @@ func RunBot(config config.Config) {
 
 	util.Logger.Print("Starting bot...")
 
-	var err error
+	// Initialize configuration
+	Initialize(config)
+
 	// Initialize database
+	var err error
 	db, err = database.InitDB(config.DBPath)
 	if err != nil {
 		util.Logger.Printf("Failed to initialize database: %v", err)

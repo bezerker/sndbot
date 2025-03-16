@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/bezerker/sndbot/blizzard"
+	config "github.com/bezerker/sndbot/config"
 	"github.com/bezerker/sndbot/database"
 	"github.com/bezerker/sndbot/util"
 	"github.com/bwmarrin/discordgo"
@@ -140,6 +141,12 @@ func TestRegisterCommand(t *testing.T) {
 	mockAPI := NewMockBlizzardAPI()
 	blizzardAPI = mockAPI
 
+	// Initialize with test config
+	Initialize(config.Config{
+		CommunityRoleID:    "test-community-role",
+		GuildMemberRoleIDs: []string{"test-guild-role-1", "test-guild-role-2"},
+	})
+
 	// Add a test character that exists and is in the guild
 	addMockCharacter("testchar", "testrealm", true)
 
@@ -176,10 +183,10 @@ func TestRegisterCommand(t *testing.T) {
 	hasCommunityRole := false
 	hasGuildRole := false
 	for _, role := range roles {
-		if role == RoleCommunity {
+		if role == cfg.CommunityRoleID {
 			hasCommunityRole = true
 		}
-		if role == GuildMembershipRoles[0] {
+		if role == cfg.GuildMemberRoleIDs[0] {
 			hasGuildRole = true
 		}
 	}
@@ -514,6 +521,12 @@ func TestRegisterNonGuildCharacter(t *testing.T) {
 	mockAPI := NewMockBlizzardAPI()
 	blizzardAPI = mockAPI
 
+	// Initialize with test config
+	Initialize(config.Config{
+		CommunityRoleID:    "test-community-role",
+		GuildMemberRoleIDs: []string{"test-guild-role-1", "test-guild-role-2"},
+	})
+
 	// Add a test character that exists but is not in the guild
 	addMockCharacter("testchar", "testrealm", false)
 
@@ -537,7 +550,7 @@ func TestRegisterNonGuildCharacter(t *testing.T) {
 	if len(roles) != 1 {
 		t.Errorf("Expected 1 role, got %d", len(roles))
 	}
-	if len(roles) > 0 && roles[0] != RoleCommunity {
+	if len(roles) > 0 && roles[0] != cfg.CommunityRoleID {
 		t.Errorf("Expected community role, got %s", roles[0])
 	}
 }
