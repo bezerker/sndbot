@@ -118,9 +118,18 @@ func (w *DiscordWrapper) GuildMemberRoleAdd(guildID, userID, roleID string) erro
 	return w.Session.GuildMemberRoleAdd(guildID, userID, roleID)
 }
 
+// BlizzardAPI is an interface for the Blizzard API client
+type BlizzardAPI interface {
+	CharacterExists(characterName, realm string) (bool, error)
+	IsCharacterInGuild(characterName, realm string, guildID int) (bool, error)
+	GetCharacterGuild(characterName, realm string) (*blizzard.Guild, error)
+	GetGuildInfo(characterName, realm string) (*blizzard.GuildInfo, error)
+	GetGuildMemberInfo(characterName, realmSlug, guildName string) (*blizzard.GuildMember, error)
+}
+
 var (
 	db          *sql.DB
-	blizzardAPI *blizzard.BlizzardClient
+	blizzardAPI BlizzardAPI
 )
 
 func RunBot(config config.Config) {
@@ -135,7 +144,7 @@ func RunBot(config config.Config) {
 
 	var err error
 	// Initialize database
-	db, err = database.InitDB("characters.db")
+	db, err = database.InitDB(config.DBPath)
 	if err != nil {
 		util.Logger.Printf("Failed to initialize database: %v", err)
 		return

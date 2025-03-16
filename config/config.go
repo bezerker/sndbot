@@ -8,6 +8,7 @@ type Config struct {
 	DiscordToken     string `mapstructure:"DISCORD_TOKEN"`
 	BlizzardClientID string `mapstructure:"BLIZZARD_CLIENT_ID"`
 	BlizzardSecret   string `mapstructure:"BLIZZARD_SECRET"`
+	DBPath           string `mapstructure:"DB_PATH"`
 }
 
 func LoadConfig() (config Config, err error) {

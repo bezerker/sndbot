@@ -14,6 +14,7 @@ import (
 	"github.com/bezerker/sndbot/util"
 )
 
+// BlizzardClient implements the bot.BlizzardAPI interface
 type BlizzardClient struct {
 	ClientID     string
 	ClientSecret string
