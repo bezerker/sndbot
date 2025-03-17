@@ -1,2 +1,8 @@
 config.yaml
 sndbot
+characters.db
+config.env
+logs
+*.bak
+data
+__debug_bin*
