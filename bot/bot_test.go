@@ -156,13 +156,19 @@ func TestRegisterCommand(t *testing.T) {
 	newMessage(ts, msg)
 
 	messages := ts.GetMessages("channel1")
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
+	if len(messages) != 2 {
+		t.Errorf("Expected 2 messages, got %d", len(messages))
 	}
 
+	// Check registration message
 	expectedResponse := "Successfully registered character testchar on server testrealm (Stand and Deliver member)"
 	if messages[0] != expectedResponse {
 		t.Errorf("Expected message '%s', got '%s'", expectedResponse, messages[0])
+	}
+
+	// Check role update message
+	if !strings.Contains(messages[1], "Granted roles:") {
+		t.Errorf("Expected role update message, got '%s'", messages[1])
 	}
 
 	// Verify database entry
@@ -536,13 +542,19 @@ func TestRegisterNonGuildCharacter(t *testing.T) {
 	newMessage(ts, msg)
 
 	messages := ts.GetMessages("channel1")
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
+	if len(messages) != 2 {
+		t.Errorf("Expected 2 messages, got %d", len(messages))
 	}
 
+	// Check registration message
 	expectedResponse := "Successfully registered character testchar on server testrealm"
 	if messages[0] != expectedResponse {
 		t.Errorf("Expected message '%s', got '%s'", expectedResponse, messages[0])
+	}
+
+	// Check role update message
+	if !strings.Contains(messages[1], "Granted roles:") {
+		t.Errorf("Expected role update message, got '%s'", messages[1])
 	}
 
 	// Verify only community role was assigned

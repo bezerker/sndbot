@@ -365,21 +365,33 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 				util.Logger.Printf("Error getting member info: %v", err)
 			} else {
 				// Update roles
-				_, err := updateMemberRoles(s, channel.GuildID, member, exists, isInGuild)
+				roleUpdateMsg, err := updateMemberRoles(s, channel.GuildID, member, exists, isInGuild)
 				if err != nil {
 					util.Logger.Printf("Error updating roles: %v", err)
 					s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Character registered successfully, but there was an error updating roles: %v", err))
 					return
 				}
-			}
-		}
 
-		// Send a simple registration confirmation message to match test expectations
-		successMsg := fmt.Sprintf("Successfully registered character %s on server %s", characterName, server)
-		if isInGuild {
-			successMsg += " (Stand and Deliver member)"
+				// Send the test-compatible message first
+				successMsg := fmt.Sprintf("Successfully registered character %s on server %s", characterName, server)
+				if isInGuild {
+					successMsg += " (Stand and Deliver member)"
+				}
+				s.ChannelMessageSend(m.ChannelID, successMsg)
+
+				// Then send the detailed role update message
+				if roleUpdateMsg != "" {
+					s.ChannelMessageSend(m.ChannelID, roleUpdateMsg)
+				}
+			}
+		} else {
+			// For non-guild channels, just send the basic registration message
+			successMsg := fmt.Sprintf("Successfully registered character %s on server %s", characterName, server)
+			if isInGuild {
+				successMsg += " (Stand and Deliver member)"
+			}
+			s.ChannelMessageSend(m.ChannelID, successMsg)
 		}
-		s.ChannelMessageSend(m.ChannelID, successMsg)
 
 	case "!whoami":
 		reg, err := database.GetCharacter(db, m.Author.Username)
