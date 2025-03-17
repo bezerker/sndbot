@@ -121,13 +121,12 @@ func (w *DiscordWrapper) GuildMemberRoleAdd(guildID, userID, roleID string) erro
 	return w.Session.GuildMemberRoleAdd(guildID, userID, roleID)
 }
 
-// BlizzardAPI is an interface for the Blizzard API client
+// BlizzardAPI defines the interface for Blizzard API operations
 type BlizzardAPI interface {
+	GetCharacterGuild(characterName, realm string) (*blizzard.Guild, error)
+	GetGuildMemberInfo(characterName, realmSlug, guildName string) (*blizzard.GuildMember, error)
 	CharacterExists(characterName, realm string) (bool, error)
 	IsCharacterInGuild(characterName, realm string, guildID int) (bool, error)
-	GetCharacterGuild(characterName, realm string) (*blizzard.Guild, error)
-	GetGuildInfo(characterName, realm string) (*blizzard.GuildInfo, error)
-	GetGuildMemberInfo(characterName, realmSlug, guildName string) (*blizzard.GuildMember, error)
 }
 
 func RunBot(config config.Config) {
@@ -404,13 +403,9 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 			return
 		}
 
-		guildInfo, err := blizzardAPI.GetGuildInfo(reg.CharacterName, reg.Server)
+		guildInfo, err := blizzardAPI.GetCharacterGuild(reg.CharacterName, reg.Server)
 		if err != nil {
-			if strings.Contains(err.Error(), "guild not found") {
-				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Could not find guild information. Please verify:\n1. The character %s exists on realm %s\n2. The character is in a guild\n3. The realm name is spelled correctly", reg.CharacterName, reg.Server))
-			} else {
-				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to get guild info: %v", err))
-			}
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to get guild info: %v", err))
 			return
 		}
 
@@ -419,12 +414,7 @@ func newMessage(s DiscordSession, m *discordgo.MessageCreate) {
 			return
 		}
 
-		rankStr := "Unknown"
-		if guildInfo.Rank >= 0 {
-			rankStr = fmt.Sprintf("%d", guildInfo.Rank)
-		}
-
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Guild: %s\nFaction: %s\nRank: %s", guildInfo.Name, guildInfo.Faction, rankStr))
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Guild: %s", guildInfo.Name))
 
 	case "!help":
 		helpMessage := `Available commands:

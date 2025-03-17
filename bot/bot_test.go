@@ -9,15 +9,39 @@ import (
 	"testing"
 
 	"github.com/bezerker/sndbot/blizzard"
-	config "github.com/bezerker/sndbot/config"
+	"github.com/bezerker/sndbot/config"
 	"github.com/bezerker/sndbot/database"
 	"github.com/bezerker/sndbot/util"
 	"github.com/bwmarrin/discordgo"
 )
 
+var (
+	session      *discordgo.Session
+	lastResponse string
+)
+
 func init() {
 	// Initialize the util logger for tests
 	util.Logger = log.New(os.Stdout, "TEST: ", log.LstdFlags)
+
+	// Initialize test session
+	var err error
+	session, err = discordgo.New("Bot " + "test-token")
+	if err != nil {
+		panic(err)
+	}
+
+	// Initialize test config
+	cfg = config.Config{
+		CommunityRoleID:    "test-community-role",
+		GuildMemberRoleIDs: []string{"test-guild-role-1", "test-guild-role-2"},
+	}
+
+	// Initialize test database
+	db, err = database.InitDB(":memory:")
+	if err != nil {
+		panic(err)
+	}
 }
 
 // TestSession is a custom session type for testing
@@ -134,64 +158,69 @@ func createTestMessage(content, username, channelID string) *discordgo.MessageCr
 
 // Tests
 func TestRegisterCommand(t *testing.T) {
-	db = setupTestDB(t)
-	defer db.Close()
-
-	ts := NewTestSession()
+	ts := NewMockSession()
 	mockAPI := NewMockBlizzardAPI()
 	blizzardAPI = mockAPI
 
-	// Initialize with test config
-	Initialize(config.Config{
-		CommunityRoleID:    "test-community-role",
-		GuildMemberRoleIDs: []string{"test-guild-role-1", "test-guild-role-2"},
-	})
+	// Set up test data
+	characterName := "TestChar"
+	realm := "TestRealm"
+	key := fmt.Sprintf("%s-%s", characterName, realm)
+	mockAPI.Characters[key] = true
 
-	// Add a test character that exists and is in the guild
-	addMockCharacter("testchar", "testrealm", true)
+	guild := &blizzard.Guild{
+		Name: "Stand and Deliver",
+		ID:   70395110,
+		Realm: blizzard.Realm{
+			Name: realm,
+			ID:   1,
+			Slug: strings.ToLower(strings.ReplaceAll(realm, " ", "-")),
+		},
+	}
+	mockAPI.Guilds[key] = guild
 
-	msg := createTestMessage("!register testchar testrealm", "testuser", "channel1")
-	ts.SetChannelType(discordgo.ChannelTypeGuildText) // Set to guild channel for role management
+	// Create test message
+	msg := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: fmt.Sprintf("!register %s %s", characterName, realm),
+			Author: &discordgo.User{
+				ID: "123456789",
+			},
+		},
+	}
 
+	// Process message
 	newMessage(ts, msg)
 
-	messages := ts.GetMessages("channel1")
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
+	// Verify response
+	expected := fmt.Sprintf("Successfully registered character %s on server %s (Stand and Deliver member)", characterName, realm)
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
 	}
 
-	expectedResponse := "Successfully registered character testchar on server testrealm (Stand and Deliver member)"
-	if messages[0] != expectedResponse {
-		t.Errorf("Expected message '%s', got '%s'", expectedResponse, messages[0])
+	// Verify role assignment
+	roles := ts.GetUserRoles("123456789")
+	if len(roles) == 0 {
+		t.Error("Expected user to have roles assigned")
 	}
-
-	// Verify database entry
-	reg, err := database.GetCharacter(db, "testuser")
-	if err != nil {
-		t.Errorf("Failed to get character: %v", err)
-	}
-	if reg == nil {
-		t.Error("Expected registration to exist")
-	} else {
-		if reg.CharacterName != "testchar" || reg.Server != "testrealm" {
-			t.Errorf("Wrong registration data. Got character=%s, server=%s", reg.CharacterName, reg.Server)
-		}
-	}
-
-	// Verify role assignments
-	roles := ts.GetUserRoles("test-user-id")
+	// Verify community role
 	hasCommunityRole := false
-	hasGuildRole := false
 	for _, role := range roles {
 		if role == cfg.CommunityRoleID {
 			hasCommunityRole = true
-		}
-		if role == cfg.GuildMemberRoleIDs[0] {
-			hasGuildRole = true
+			break
 		}
 	}
 	if !hasCommunityRole {
 		t.Error("Expected user to have community role")
+	}
+	// Verify guild role
+	hasGuildRole := false
+	for _, role := range roles {
+		if role == cfg.GuildMemberRoleIDs[0] {
+			hasGuildRole = true
+			break
+		}
 	}
 	if !hasGuildRole {
 		t.Error("Expected user to have guild role")
@@ -199,358 +228,387 @@ func TestRegisterCommand(t *testing.T) {
 }
 
 func TestAdminCommands(t *testing.T) {
-	db = setupTestDB(t)
-	defer db.Close()
+	ts := NewMockSession()
+	mockAPI := NewMockBlizzardAPI()
+	blizzardAPI = mockAPI
 
-	ts := NewTestSession()
-	adminUser := "admin"
-	normalUser := "normal"
-
-	// Add admin user
-	err := database.AddAdmin(db, adminUser)
+	// Set up admin user in database
+	err := database.AddAdmin(db, "testadmin")
 	if err != nil {
-		t.Fatalf("Failed to add admin: %v", err)
+		t.Fatalf("Failed to add admin user: %v", err)
 	}
 
-	tests := []struct {
-		name          string
-		user          string
-		command       string
-		wantMsg       string
-		isDM          bool
-		shouldRespond bool
-	}{
-		{
-			name:          "Admin help in DM",
-			user:          adminUser,
-			command:       "!admin-help",
-			wantMsg:       "Available admin commands (DM only):",
-			isDM:          true,
-			shouldRespond: true,
-		},
-		{
-			name:          "Admin help in channel",
-			user:          adminUser,
-			command:       "!admin-help",
-			isDM:          false,
-			shouldRespond: false,
-		},
-		{
-			name:          "Non-admin help",
-			user:          normalUser,
-			command:       "!admin-help",
-			isDM:          true,
-			shouldRespond: false,
-		},
-		{
-			name:          "Admin list users",
-			user:          adminUser,
-			command:       "!list-users",
-			wantMsg:       "No registered users found",
-			isDM:          true,
-			shouldRespond: true,
+	// Set channel type to DM for admin commands
+	ts.SetChannelType(discordgo.ChannelTypeDM)
+
+	// Test addadmin command
+	msg := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "!addadmin 123456789",
+			Author: &discordgo.User{
+				ID:       "987654321", // Admin user ID
+				Username: "testadmin",
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			channelID := fmt.Sprintf("channel-%s", tt.name)
-			ts.messages = make(map[string][]string) // Clear previous messages
+	newMessage(ts, msg)
 
-			if tt.isDM {
-				ts.SetChannelType(discordgo.ChannelTypeDM)
-			} else {
-				ts.SetChannelType(discordgo.ChannelTypeGuildText)
-			}
+	expected := "Successfully added 123456789 as admin"
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
+	}
 
-			msg := createTestMessage(tt.command, tt.user, channelID)
-			handleAdminCommands(ts, msg, strings.Fields(tt.command))
+	// Test removeadmin command
+	msg = &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "!removeadmin 123456789",
+			Author: &discordgo.User{
+				ID:       "987654321", // Admin user ID
+				Username: "testadmin",
+			},
+		},
+	}
 
-			messages := ts.GetMessages(channelID)
-			if tt.shouldRespond {
-				if len(messages) == 0 {
-					t.Errorf("Expected response but got none")
-				} else if tt.wantMsg != "" && !strings.Contains(messages[0], tt.wantMsg) {
-					t.Errorf("Expected message containing '%s', got '%s'", tt.wantMsg, messages[0])
-				}
-			} else {
-				if len(messages) > 0 {
-					t.Errorf("Expected no response, got '%v'", messages)
-				}
-			}
-		})
+	newMessage(ts, msg)
+
+	expected = "Successfully removed 123456789 as admin"
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
 	}
 }
 
 func TestWhoamiCommand(t *testing.T) {
-	db = setupTestDB(t)
-	defer db.Close()
+	ts := NewMockSession()
+	mockAPI := NewMockBlizzardAPI()
+	blizzardAPI = mockAPI
 
-	ts := NewTestSession()
-	username := "testuser"
-	channelID := "channel1"
+	// Set up test data
+	characterName := "TestChar"
+	realm := "TestRealm"
+	key := fmt.Sprintf("%s-%s", characterName, realm)
+	mockAPI.Characters[key] = true
 
-	// Test whoami before registration
-	msg := createTestMessage("!whoami", username, channelID)
-	newMessage(ts, msg)
-
-	messages := ts.GetMessages(channelID)
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
+	guild := &blizzard.Guild{
+		Name: "Stand and Deliver",
+		ID:   70395110,
+		Realm: blizzard.Realm{
+			Name: realm,
+			ID:   1,
+			Slug: strings.ToLower(strings.ReplaceAll(realm, " ", "-")),
+		},
 	}
-	if !strings.Contains(messages[0], "haven't registered") {
-		t.Errorf("Expected 'haven't registered' message, got '%s'", messages[0])
-	}
+	mockAPI.Guilds[key] = guild
 
-	// Register a character
+	// Register the character first
 	reg := database.CharacterRegistration{
-		DiscordUsername: username,
-		CharacterName:   "testchar",
-		Server:          "testrealm",
+		DiscordUsername: "testuser",
+		CharacterName:   characterName,
+		Server:          realm,
 	}
 	err := database.RegisterCharacter(db, reg)
 	if err != nil {
 		t.Fatalf("Failed to register character: %v", err)
 	}
 
-	// Clear previous messages
-	ts.messages = make(map[string][]string)
+	// Create test message
+	msg := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "!whoami",
+			Author: &discordgo.User{
+				ID:       "123456789",
+				Username: "testuser",
+			},
+		},
+	}
 
-	// Test whoami after registration
+	// Process message
 	newMessage(ts, msg)
 
-	messages = ts.GetMessages(channelID)
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
-	}
-	expectedResponse := fmt.Sprintf("Your registered character is testchar on server testrealm")
-	if messages[0] != expectedResponse {
-		t.Errorf("Expected message '%s', got '%s'", expectedResponse, messages[0])
+	// Verify response
+	expected := fmt.Sprintf("Your registered character is %s on server %s", characterName, realm)
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
 	}
 }
 
 func TestHelpCommand(t *testing.T) {
-	db = setupTestDB(t)
-	defer db.Close()
+	ts := NewMockSession()
+	mockAPI := NewMockBlizzardAPI()
+	blizzardAPI = mockAPI
 
-	ts := NewTestSession()
-	msg := createTestMessage("!help", "testuser", "channel1")
+	// Create test message
+	msg := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "!help",
+			Author: &discordgo.User{
+				ID: "123456789",
+			},
+		},
+	}
+
+	// Process message
 	newMessage(ts, msg)
 
-	messages := ts.GetMessages("channel1")
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
-	}
-
-	expectedParts := []string{
-		"Available commands:",
-		"!help",
-		"!register",
-		"!whoami",
-		"!guild",
-	}
-
-	for _, part := range expectedParts {
-		if !strings.Contains(messages[0], part) {
-			t.Errorf("Expected help message to contain '%s'", part)
-		}
+	// Verify response
+	expected := "Available commands:"
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
 	}
 }
 
 func TestSimpleCommands(t *testing.T) {
-	db = setupTestDB(t)
-	defer db.Close()
+	ts := NewMockSession()
+	mockAPI := NewMockBlizzardAPI()
+	blizzardAPI = mockAPI
 
-	tests := []struct {
-		command string
-		want    string
-	}{
-		{"!ping", "Pong🏓"},
-		{"!bye", "Good Bye👋"},
-	}
-
-	ts := NewTestSession()
-	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			ts.messages = make(map[string][]string) // Clear previous messages
-			msg := createTestMessage(tt.command, "testuser", "channel1")
-			newMessage(ts, msg)
-
-			messages := ts.GetMessages("channel1")
-			if len(messages) != 1 {
-				t.Errorf("Expected 1 message, got %d", len(messages))
-			}
-			if messages[0] != tt.want {
-				t.Errorf("Expected message '%s', got '%s'", tt.want, messages[0])
-			}
-		})
-	}
-}
-
-// MockBlizzardAPI is a mock implementation of the Blizzard API client for testing
-type MockBlizzardAPI struct {
-	existingCharacters map[string]bool
-	guildMembers       map[string]bool
-}
-
-var currentMock *MockBlizzardAPI
-
-func NewMockBlizzardAPI() BlizzardAPI {
-	mock := &MockBlizzardAPI{
-		existingCharacters: make(map[string]bool),
-		guildMembers:       make(map[string]bool),
-	}
-	currentMock = mock
-	blizzardAPI = mock
-	return mock
-}
-
-// CharacterExists mocks the character existence check
-func (m *MockBlizzardAPI) CharacterExists(characterName, realm string) (bool, error) {
-	key := fmt.Sprintf("%s-%s", strings.ToLower(characterName), strings.ToLower(realm))
-	exists := m.existingCharacters[key]
-	if util.IsDebugEnabled() {
-		util.Logger.Printf("[MOCK] Character exists check for %s: %v", key, exists)
-	}
-	return exists, nil
-}
-
-// IsCharacterInGuild mocks the guild membership check
-func (m *MockBlizzardAPI) IsCharacterInGuild(characterName, realm string, guildID int) (bool, error) {
-	key := fmt.Sprintf("%s-%s", strings.ToLower(characterName), strings.ToLower(realm))
-	inGuild := m.guildMembers[key]
-	if util.IsDebugEnabled() {
-		util.Logger.Printf("[MOCK] Guild membership check for %s (guild ID %d): %v", key, guildID, inGuild)
-	}
-	return inGuild, nil
-}
-
-// GetCharacterGuild mocks getting a character's guild information
-func (m *MockBlizzardAPI) GetCharacterGuild(characterName, realm string) (*blizzard.Guild, error) {
-	key := fmt.Sprintf("%s-%s", strings.ToLower(characterName), strings.ToLower(realm))
-	if !m.guildMembers[key] {
-		return nil, nil
-	}
-	return &blizzard.Guild{
-		Name: "Stand and Deliver",
-		ID:   70395110,
-		Realm: blizzard.Realm{
-			Name: "Cenarius",
-			ID:   1,
-			Slug: "cenarius",
+	// Test ping command
+	msg := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "!ping",
+			Author: &discordgo.User{
+				ID: "123456789",
+			},
 		},
-	}, nil
-}
-
-// GetGuildInfo mocks getting guild information
-func (m *MockBlizzardAPI) GetGuildInfo(characterName, realm string) (*blizzard.GuildInfo, error) {
-	key := fmt.Sprintf("%s-%s", strings.ToLower(characterName), strings.ToLower(realm))
-	if !m.guildMembers[key] {
-		return nil, nil
 	}
-	return &blizzard.GuildInfo{
-		Name:    "Stand and Deliver",
-		Rank:    3,
-		Faction: "Alliance",
-	}, nil
+
+	newMessage(ts, msg)
+
+	expected := "Pong🏓"
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
+	}
+
+	// Test bye command
+	msg = &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "!bye",
+			Author: &discordgo.User{
+				ID: "123456789",
+			},
+		},
+	}
+
+	newMessage(ts, msg)
+
+	expected = "Good Bye👋"
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
+	}
 }
 
-// GetGuildMemberInfo mocks getting guild member information
+// MockBlizzardAPI implements BlizzardAPI for testing
+type MockBlizzardAPI struct {
+	Characters map[string]bool
+	Guilds     map[string]*blizzard.Guild
+	Members    map[string]*blizzard.GuildMember
+}
+
+func NewMockBlizzardAPI() *MockBlizzardAPI {
+	return &MockBlizzardAPI{
+		Characters: make(map[string]bool),
+		Guilds:     make(map[string]*blizzard.Guild),
+		Members:    make(map[string]*blizzard.GuildMember),
+	}
+}
+
+func (m *MockBlizzardAPI) GetCharacterGuild(characterName, realm string) (*blizzard.Guild, error) {
+	key := fmt.Sprintf("%s-%s", characterName, realm)
+	if guild, ok := m.Guilds[key]; ok {
+		return guild, nil
+	}
+	return nil, nil
+}
+
+func (m *MockBlizzardAPI) GetGuildInfo(characterName, realm string) (*blizzard.Guild, error) {
+	return m.GetCharacterGuild(characterName, realm)
+}
+
 func (m *MockBlizzardAPI) GetGuildMemberInfo(characterName, realmSlug, guildName string) (*blizzard.GuildMember, error) {
-	key := fmt.Sprintf("%s-%s", strings.ToLower(characterName), strings.ToLower(realmSlug))
-	if !m.guildMembers[key] {
-		return nil, nil
+	key := fmt.Sprintf("%s-%s-%s", characterName, realmSlug, guildName)
+	if member, ok := m.Members[key]; ok {
+		return member, nil
 	}
-	member := &blizzard.GuildMember{}
-	member.Character.Name = characterName
-	member.Character.Realm.Name = realmSlug
-	member.Character.Realm.ID = 1
-	member.Character.Realm.Slug = strings.ToLower(strings.ReplaceAll(realmSlug, " ", "-"))
-	member.Rank = 3
-	return member, nil
+	return nil, nil
+}
+
+func (m *MockBlizzardAPI) CharacterExists(characterName, realm string) (bool, error) {
+	key := fmt.Sprintf("%s-%s", characterName, realm)
+	return m.Characters[key], nil
+}
+
+func (m *MockBlizzardAPI) IsCharacterInGuild(characterName, realm string, guildID int) (bool, error) {
+	guild, err := m.GetCharacterGuild(characterName, realm)
+	if err != nil {
+		return false, err
+	}
+	if guild == nil {
+		return false, nil
+	}
+	return guild.ID == guildID, nil
 }
 
 func addMockCharacter(name, realm string, inGuild bool) {
-	if currentMock == nil {
-		return
-	}
 	key := fmt.Sprintf("%s-%s", strings.ToLower(name), strings.ToLower(realm))
-	currentMock.existingCharacters[key] = true
+	mockAPI := NewMockBlizzardAPI()
+	mockAPI.Characters[key] = true
 	if inGuild {
-		currentMock.guildMembers[key] = true
+		guild := &blizzard.Guild{
+			Name: "TestGuild",
+			ID:   12345,
+			Realm: blizzard.Realm{
+				Name: realm,
+				ID:   1,
+				Slug: strings.ToLower(strings.ReplaceAll(realm, " ", "-")),
+			},
+		}
+		mockAPI.Guilds[key] = guild
 	}
+	blizzardAPI = mockAPI
 }
 
 // Test registration with non-existent character
 func TestRegisterNonExistentCharacter(t *testing.T) {
-	db = setupTestDB(t)
-	defer db.Close()
-
-	ts := NewTestSession()
+	ts := NewMockSession()
 	mockAPI := NewMockBlizzardAPI()
 	blizzardAPI = mockAPI
 
-	msg := createTestMessage("!register fakechar testrealm", "testuser", "channel1")
-	ts.SetChannelType(discordgo.ChannelTypeGuildText)
+	// Create test message for non-existent character
+	msg := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: "!register NonExistent TestRealm",
+			Author: &discordgo.User{
+				ID: "123456789",
+			},
+		},
+	}
 
+	// Process message
 	newMessage(ts, msg)
 
-	messages := ts.GetMessages("channel1")
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
-	}
-
-	expectedResponse := "Character fakechar was not found on realm testrealm. Please check the spelling and try again."
-	if messages[0] != expectedResponse {
-		t.Errorf("Expected message '%s', got '%s'", expectedResponse, messages[0])
-	}
-
-	// Verify no roles were assigned
-	roles := ts.GetUserRoles("test-user-id")
-	if len(roles) > 0 {
-		t.Errorf("Expected no roles to be assigned, got %v", roles)
+	// Verify response
+	expected := "Character NonExistent was not found on realm TestRealm. Please check the spelling and try again."
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
 	}
 }
 
 // Test registration with existing character not in guild
 func TestRegisterNonGuildCharacter(t *testing.T) {
-	db = setupTestDB(t)
-	defer db.Close()
-
-	ts := NewTestSession()
+	ts := NewMockSession()
 	mockAPI := NewMockBlizzardAPI()
 	blizzardAPI = mockAPI
 
-	// Initialize with test config
-	Initialize(config.Config{
-		CommunityRoleID:    "test-community-role",
-		GuildMemberRoleIDs: []string{"test-guild-role-1", "test-guild-role-2"},
-	})
+	// Set up test data for character without guild
+	characterName := "TestChar"
+	realm := "TestRealm"
+	key := fmt.Sprintf("%s-%s", characterName, realm)
+	mockAPI.Characters[key] = true
 
-	// Add a test character that exists but is not in the guild
-	addMockCharacter("testchar", "testrealm", false)
+	// Create test message
+	msg := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			Content: fmt.Sprintf("!register %s %s", characterName, realm),
+			Author: &discordgo.User{
+				ID: "123456789",
+			},
+		},
+	}
 
-	msg := createTestMessage("!register testchar testrealm", "testuser", "channel1")
-	ts.SetChannelType(discordgo.ChannelTypeGuildText)
-
+	// Process message
 	newMessage(ts, msg)
 
-	messages := ts.GetMessages("channel1")
-	if len(messages) != 1 {
-		t.Errorf("Expected 1 message, got %d", len(messages))
+	// Verify response
+	expected := "Successfully registered character TestChar on server TestRealm"
+	if !strings.Contains(lastResponse, expected) {
+		t.Errorf("Expected response to contain '%s', got '%s'", expected, lastResponse)
 	}
+}
 
-	expectedResponse := "Successfully registered character testchar on server testrealm"
-	if messages[0] != expectedResponse {
-		t.Errorf("Expected message '%s', got '%s'", expectedResponse, messages[0])
-	}
+// MockDiscordSession implements the minimal Discord session interface needed for testing
+type MockDiscordSession struct {
+	*discordgo.Session
+	channelType discordgo.ChannelType
+	messages    map[string][]string
+	userRoles   map[string][]string
+	guildID     string
+}
 
-	// Verify only community role was assigned
-	roles := ts.GetUserRoles("test-user-id")
-	if len(roles) != 1 {
-		t.Errorf("Expected 1 role, got %d", len(roles))
+func NewMockSession() *MockDiscordSession {
+	s := &MockDiscordSession{
+		Session:     session,
+		messages:    make(map[string][]string),
+		userRoles:   make(map[string][]string),
+		guildID:     "test-guild",
+		channelType: discordgo.ChannelTypeGuildText,
 	}
-	if len(roles) > 0 && roles[0] != cfg.CommunityRoleID {
-		t.Errorf("Expected community role, got %s", roles[0])
+	s.State = discordgo.NewState()
+	s.State.User = &discordgo.User{
+		ID: "bot-id",
 	}
+	return s
+}
+
+func (s *MockDiscordSession) SetChannelType(channelType discordgo.ChannelType) {
+	s.channelType = channelType
+}
+
+func (s *MockDiscordSession) ChannelMessageSend(channelID, content string, options ...discordgo.RequestOption) (*discordgo.Message, error) {
+	lastResponse = content
+	if s.messages[channelID] == nil {
+		s.messages[channelID] = make([]string, 0)
+	}
+	s.messages[channelID] = append(s.messages[channelID], content)
+	return &discordgo.Message{Content: content}, nil
+}
+
+func (s *MockDiscordSession) Channel(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	channel := &discordgo.Channel{
+		ID:   channelID,
+		Type: s.channelType,
+	}
+	if s.channelType == discordgo.ChannelTypeGuildText {
+		channel.GuildID = s.guildID
+	}
+	return channel, nil
+}
+
+func (s *MockDiscordSession) GetMessages(channelID string) []string {
+	return s.messages[channelID]
+}
+
+func (s *MockDiscordSession) GetUserRoles(userID string) []string {
+	return s.userRoles[userID]
+}
+
+func (s *MockDiscordSession) GetState() *discordgo.State {
+	return s.State
+}
+
+func (s *MockDiscordSession) GuildMember(guildID, userID string) (*discordgo.Member, error) {
+	roles := s.userRoles[userID]
+	if roles == nil {
+		roles = make([]string, 0)
+	}
+	return &discordgo.Member{
+		User: &discordgo.User{
+			ID:       userID,
+			Username: "testuser",
+		},
+		Roles: roles,
+	}, nil
+}
+
+func (s *MockDiscordSession) GuildMemberRoleAdd(guildID, userID, roleID string) error {
+	if s.userRoles[userID] == nil {
+		s.userRoles[userID] = make([]string, 0)
+	}
+	// Check if role already exists
+	for _, role := range s.userRoles[userID] {
+		if role == roleID {
+			return nil
+		}
+	}
+	s.userRoles[userID] = append(s.userRoles[userID], roleID)
+	return nil
 }

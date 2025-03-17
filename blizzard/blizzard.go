@@ -14,7 +14,6 @@ import (
 	"github.com/bezerker/sndbot/util"
 )
 
-// BlizzardClient implements the bot.BlizzardAPI interface
 type BlizzardClient struct {
 	ClientID     string
 	ClientSecret string
@@ -37,7 +36,6 @@ type CharacterSummary struct {
 		Type string `json:"type"`
 		Name string `json:"name"`
 	} `json:"gender"`
-	GuildRank int `json:"guild_rank"`
 }
 
 type Guild struct {
@@ -56,45 +54,17 @@ type Realm struct {
 	Slug string `json:"slug"`
 }
 
-// GuildInfo represents simplified guild information
-type GuildInfo struct {
-	Name    string
-	Rank    int
-	Faction string
-}
-
 // GuildMember represents a member of a guild
 type GuildMember struct {
 	Character struct {
 		Name  string `json:"name"`
-		Realm struct {
-			Name string `json:"name"`
-			ID   int    `json:"id"`
-			Slug string `json:"slug"`
-		} `json:"realm"`
+		Realm Realm  `json:"realm"`
 	} `json:"character"`
 	Rank int `json:"rank"`
 }
 
-// GuildRoster represents the full guild roster response
-type GuildRoster struct {
-	Members []struct {
-		Character struct {
-			Name  string `json:"name"`
-			Realm struct {
-				Name string `json:"name"`
-				ID   int    `json:"id"`
-				Slug string `json:"slug"`
-			} `json:"realm"`
-		} `json:"character"`
-		Rank int `json:"rank"`
-	} `json:"members"`
-}
-
 func NewBlizzardClient(clientID, clientSecret string) *BlizzardClient {
-	if util.IsDebugEnabled() {
-		util.Logger.Printf("Initializing Blizzard API client with client ID: %s", clientID)
-	}
+	util.Logger.Printf("Initializing Blizzard API client with client ID: %s", clientID)
 	return &BlizzardClient{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -224,33 +194,30 @@ func (c *BlizzardClient) GetCharacterGuild(characterName, realm string) (*Guild,
 	return &character.Guild, nil
 }
 
+// GetGuildMemberInfo gets information about a guild member
 func (c *BlizzardClient) GetGuildMemberInfo(characterName, realmSlug, guildName string) (*GuildMember, error) {
+	util.Logger.Printf("Looking up guild member %s in guild %s on realm %s", characterName, guildName, realmSlug)
+
 	if err := c.getAccessToken(); err != nil {
 		util.Logger.Printf("Failed to get access token: %v", err)
 		return nil, err
 	}
 
-	// Clean up guild name for URL (lowercase, spaces to hyphens)
-	guildSlug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(guildName), " ", "-"))
-
-	// Build URL for guild roster
+	// Build URL for guild member info
 	baseURL := "https://us.api.blizzard.com"
-	path := fmt.Sprintf("/data/wow/guild/%s/%s/roster", url.PathEscape(realmSlug), url.PathEscape(guildSlug))
+	path := fmt.Sprintf("/data/wow/guild/%s/%s/roster", url.PathEscape(realmSlug), url.PathEscape(guildName))
 	params := url.Values{}
 	params.Add("namespace", "profile-us")
 	params.Add("locale", "en_US")
 
 	fullURL := fmt.Sprintf("%s%s?%s", baseURL, path, params.Encode())
 
-	if util.IsDebugEnabled() {
-		util.Logger.Printf("Making guild roster request to: %s", fullURL)
-		util.Logger.Printf("Debug info - Realm slug: %s, Guild slug: %s", realmSlug, guildSlug)
-	}
+	util.Logger.Printf("Making guild member request to: %s", fullURL)
 
 	req, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
 		util.Logger.Printf("Error creating request: %v", err)
-		return nil, fmt.Errorf("failed to create guild roster request: %v", err)
+		return nil, fmt.Errorf("failed to create guild member request: %v", err)
 	}
 
 	req.Header.Add("Authorization", "Bearer "+c.accessToken)
@@ -260,146 +227,56 @@ func (c *BlizzardClient) GetGuildMemberInfo(characterName, realmSlug, guildName 
 	resp, err := client.Do(req)
 	if err != nil {
 		util.Logger.Printf("Error making request: %v", err)
-		return nil, fmt.Errorf("failed to get guild roster: %v", err)
+		return nil, fmt.Errorf("failed to get guild member info: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		util.Logger.Printf("Error reading response body: %v", err)
-		return nil, fmt.Errorf("failed to read guild roster response: %v", err)
+		return nil, fmt.Errorf("failed to read guild member response: %v", err)
 	}
 
-	if resp.StatusCode != 200 {
-		if util.IsDebugEnabled() {
-			util.Logger.Printf("API request failed with status %d. Response body: %s", resp.StatusCode, string(body))
-		}
-		if resp.StatusCode == 404 {
-			util.Logger.Printf("Guild not found: realm=%s, guild=%s", realmSlug, guildSlug)
-			return nil, fmt.Errorf("guild not found on realm")
-		}
-		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
-	}
+	util.Logger.Printf("Guild member API response status: %d", resp.StatusCode)
 
-	var roster GuildRoster
-	if err := json.Unmarshal(body, &roster); err != nil {
-		util.Logger.Printf("Error parsing guild roster response: %v", err)
-		if util.IsDebugEnabled() {
-			util.Logger.Printf("Response body: %s", string(body))
-		}
-		return nil, fmt.Errorf("failed to parse guild roster response: %v", err)
-	}
-
-	if util.IsDebugEnabled() {
-		util.Logger.Printf("Guild roster response - Members count: %d", len(roster.Members))
-	}
-
-	// Find the specific character in the roster
-	characterNameLower := strings.ToLower(characterName)
-	var foundMember *GuildMember
-	for _, member := range roster.Members {
-		if strings.ToLower(member.Character.Name) == characterNameLower {
-			guildMember := &GuildMember{
-				Rank: member.Rank,
-			}
-			guildMember.Character.Name = member.Character.Name
-			guildMember.Character.Realm = member.Character.Realm
-			foundMember = guildMember
-			if util.IsDebugEnabled() {
-				util.Logger.Printf("Found character %s in roster with rank %d", characterName, member.Rank)
-			}
-			break
-		}
-	}
-
-	if foundMember == nil && util.IsDebugEnabled() {
-		util.Logger.Printf("Character %s not found in guild roster", characterName)
-	}
-
-	return foundMember, nil
-}
-
-// GetGuildInfo returns simplified guild information for a character
-func (c *BlizzardClient) GetGuildInfo(characterName, realm string) (*GuildInfo, error) {
-	guild, err := c.GetCharacterGuild(characterName, realm)
-	if err != nil {
-		return nil, err
-	}
-	if guild == nil {
+	if resp.StatusCode == 404 {
+		util.Logger.Printf("Guild member %s not found in guild %s on realm %s", characterName, guildName, realmSlug)
 		return nil, nil
 	}
 
-	// Use the guild's realm information instead of the character's realm
-	guildRealmSlug := guild.Realm.Slug
-	if guildRealmSlug == "" {
-		// Fallback to converting realm name if slug is not provided
-		guildRealmSlug = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(guild.Realm.Name), " ", "-"))
+	if resp.StatusCode != 200 {
+		util.Logger.Printf("API request failed with status %d. Response body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
 	}
 
-	// Get member info to get the rank
-	member, err := c.GetGuildMemberInfo(characterName, guildRealmSlug, guild.Name)
-	if err != nil {
-		util.Logger.Printf("Failed to get guild member info: %v", err)
-		// Continue with unknown rank
-		return &GuildInfo{
-			Name:    guild.Name,
-			Rank:    -1,
-			Faction: guild.Faction.Name,
-		}, nil
+	var member GuildMember
+	if err := json.Unmarshal(body, &member); err != nil {
+		util.Logger.Printf("Error parsing guild member response: %v\nResponse body: %s", err, string(body))
+		return nil, fmt.Errorf("failed to parse guild member response: %v", err)
 	}
 
-	rank := -1
-	if member != nil {
-		rank = member.Rank
-	} else if util.IsDebugEnabled() {
-		util.Logger.Printf("Member info not found for character %s", characterName)
-	}
-
-	return &GuildInfo{
-		Name:    guild.Name,
-		Rank:    rank,
-		Faction: guild.Faction.Name,
-	}, nil
+	util.Logger.Printf("Successfully found guild member information: %+v", member)
+	return &member, nil
 }
 
-// IsCharacterInGuild checks if a character is in a specific guild by ID
-func (c *BlizzardClient) IsCharacterInGuild(characterName, realm string, guildID int) (bool, error) {
-	// First get the character's guild info
-	guild, err := c.GetCharacterGuild(characterName, realm)
-	if err != nil {
-		return false, fmt.Errorf("failed to get character guild info: %v", err)
-	}
-
-	if guild == nil {
-		if util.IsDebugEnabled() {
-			util.Logger.Printf("Character %s on %s is not in any guild", characterName, realm)
-		}
-		return false, nil
-	}
-
-	// Check if the guild ID matches
-	if guild.ID == guildID {
-		if util.IsDebugEnabled() {
-			util.Logger.Printf("Character %s on %s is in guild %s (ID: %d)", characterName, realm, guild.Name, guild.ID)
-		}
-		return true, nil
-	}
-
-	if util.IsDebugEnabled() {
-		util.Logger.Printf("Character %s on %s is in a different guild: %s (ID: %d)", characterName, realm, guild.Name, guild.ID)
-	}
-	return false, nil
-}
-
-// CharacterExists checks if a character exists on the specified realm
+// CharacterExists checks if a character exists on a realm
 func (c *BlizzardClient) CharacterExists(characterName, realm string) (bool, error) {
+	util.Logger.Printf("Checking if character %s exists on realm %s", characterName, realm)
+
 	if err := c.getAccessToken(); err != nil {
-		return false, fmt.Errorf("failed to get access token: %v", err)
+		util.Logger.Printf("Failed to get access token: %v", err)
+		return false, err
 	}
 
-	// Convert realm name to slug format
+	// Convert realm name to slug format (lowercase, spaces to hyphens)
 	realmSlug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(realm), " ", "-"))
 	characterNameLower := strings.ToLower(strings.TrimSpace(characterName))
+
+	// Validate inputs
+	if realmSlug == "" || characterNameLower == "" {
+		util.Logger.Printf("Invalid input: realm='%s' character='%s'", realm, characterName)
+		return false, fmt.Errorf("realm and character name cannot be empty")
+	}
 
 	// Build URL for character profile
 	baseURL := "https://us.api.blizzard.com"
@@ -410,12 +287,11 @@ func (c *BlizzardClient) CharacterExists(characterName, realm string) (bool, err
 
 	fullURL := fmt.Sprintf("%s%s?%s", baseURL, path, params.Encode())
 
-	if util.IsDebugEnabled() {
-		util.Logger.Printf("Checking character existence: %s", fullURL)
-	}
+	util.Logger.Printf("Making character profile request to: %s", fullURL)
 
 	req, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
+		util.Logger.Printf("Error creating request: %v", err)
 		return false, fmt.Errorf("failed to create character request: %v", err)
 	}
 
@@ -425,22 +301,46 @@ func (c *BlizzardClient) CharacterExists(characterName, realm string) (bool, err
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("failed to check character: %v", err)
+		util.Logger.Printf("Error making request: %v", err)
+		return false, fmt.Errorf("failed to get character info: %v", err)
 	}
 	defer resp.Body.Close()
 
+	util.Logger.Printf("Character API response status: %d", resp.StatusCode)
+
 	if resp.StatusCode == 404 {
-		if util.IsDebugEnabled() {
-			util.Logger.Printf("Character %s on realm %s not found", characterName, realm)
-		}
+		util.Logger.Printf("Character %s not found on realm %s", characterName, realm)
 		return false, nil
 	}
 
 	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		util.Logger.Printf("API request failed with status %d. Response body: %s", resp.StatusCode, string(body))
 		return false, fmt.Errorf("API request failed with status %d", resp.StatusCode)
 	}
 
+	util.Logger.Printf("Character %s exists on realm %s", characterName, realm)
 	return true, nil
+}
+
+// IsCharacterInGuild checks if a character is in a specific guild
+func (c *BlizzardClient) IsCharacterInGuild(characterName, realm string, guildID int) (bool, error) {
+	util.Logger.Printf("Checking if character %s on realm %s is in guild %d", characterName, realm, guildID)
+
+	guild, err := c.GetCharacterGuild(characterName, realm)
+	if err != nil {
+		util.Logger.Printf("Error getting character guild: %v", err)
+		return false, err
+	}
+
+	if guild == nil {
+		util.Logger.Printf("Character %s on realm %s is not in any guild", characterName, realm)
+		return false, nil
+	}
+
+	isInGuild := guild.ID == guildID
+	util.Logger.Printf("Character %s on realm %s is in guild %d: %v", characterName, realm, guildID, isInGuild)
+	return isInGuild, nil
 }
 
 func login() {
