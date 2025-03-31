@@ -14,6 +14,8 @@ type Config struct {
 	DBPath             string   `mapstructure:"DB_PATH"`
 	CommunityRoleID    string   `mapstructure:"COMMUNITY_ROLE_ID"`
 	GuildMemberRoleIDs []string `mapstructure:"GUILD_MEMBER_ROLE_IDS"`
+	OAuthRedirectURL   string   `mapstructure:"OAUTH_REDIRECT_URL"`
+	OAuthStateSecret   string   `mapstructure:"OAUTH_STATE_SECRET"`
 }
 
 func LoadConfig() (config Config, err error) {
